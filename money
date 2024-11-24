@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+
+import pandas as pd
+
+KEY_INCOME = 'お預入れ'
+KEY_EXPENSE = 'お引出し'
+KEY_DATE = '年月日'
+KEY_CONTENT = 'お取り扱い内容'
+
+LABEL_PAYPAY = "ﾍﾟｲﾍﾟｲ"
+unknown_usage_labels = [LABEL_PAYPAY]
+
+def load_blacklist(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return [line.strip() for line in f.readlines()]
+
+income_blacklist = load_blacklist('csv/blacklist.txt')
+
+csv_file = 'csv/meisai.csv'
+data = pd.read_csv(csv_file, encoding='sjis')
+
+def replace(x):
+    return x.replace('\u3000', ' ').replace('振込', '').strip()
+
+def to_list(x, key):
+    return [x[KEY_DATE], x[KEY_CONTENT], int(x[key])]
+
+incomes = []
+expenses = []
+expenses_sus = []  # Usage unknown, may or may not be expense
+
+def data_exists(xd, key):
+    return str(xd[key]) != "nan"
+
+for i, x in data.iterrows():
+    xd = x.to_dict()
+    x[KEY_CONTENT] = replace(x[KEY_CONTENT])
+    if data_exists(xd, KEY_INCOME):
+        if x[KEY_CONTENT] not in income_blacklist:
+            incomes.append(to_list(x, KEY_INCOME))
+    elif data_exists(xd, KEY_EXPENSE):
+        if x[KEY_CONTENT] in unknown_usage_labels:
+            expenses_sus.append(to_list(x, KEY_EXPENSE))
+        else:
+            expenses.append(to_list(x, KEY_EXPENSE))
+
+def format(xs):
+    rs = []
+    ss = list(str(xs))
+    ss.reverse()
+    c = 0
+    for x in ss:
+        rs.append(x)
+        if c == 2:
+            rs.append(',')
+            c = -1
+        c += 1
+    rs.reverse()
+    return "".join(rs)
+
+def trim_vat(amount_including_vat, vat_rate=10):
+    vat_multiplier = 1 + (vat_rate / 100)
+    amount_excluding_vat = amount_including_vat / vat_multiplier
+    return int(amount_excluding_vat)
+
+income_total_vat_included = 0
+
+for i in incomes:
+    print(i)
+    income_total_vat_included += i[2]
+
+income_total = trim_vat(income_total_vat_included)
+
+print(f"income total (with VAT): {format(income_total_vat_included)}")
+print(f"income total (without VAT): {format(income_total)}")
