@@ -1,33 +1,121 @@
 #!/usr/bin/env python3
 
+import re
+import openpyxl
 import pandas as pd
+import sys
 
 KEY_INCOME = 'お預入れ'
+KEY_COMM = '通信費'
 KEY_EXPENSE = 'お引出し'
 KEY_DATE = '年月日'
 KEY_CONTENT = 'お取り扱い内容'
 
-LABEL_PAYPAY = "ﾍﾟｲﾍﾟｲ"
-unknown_usage_labels = [LABEL_PAYPAY]
+CNONE = "none"
 
-def load_blacklist(file_path):
+import openpyxl
+
+def write_to_xlsx(ys, xs, file_path):
+    # Create a new workbook
+    wb = openpyxl.Workbook()
+
+    # Define column headers
+    header = ["年月日", "カテゴリー", "お取り扱い内容", "金額"]
+
+    def set_column_widths(sheet):
+        column_widths = [12, 20, 30, 15]  # Set custom column widths
+        for i, width in enumerate(column_widths, start=1):
+            sheet.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
+
+    def append_data(sheet, data, title):
+        """Appends header, data, and total sum row."""
+        sheet.append(header)
+        for row in data:
+            sheet.append(row)
+        
+        # Calculate and append total sum row
+        if data:
+            total_sum = sum(row[3] for row in data)  # Summing the '金額' column
+            sheet.append(["", "", "合計", total_sum])  # Adding total sum row
+            sheet[f"D{len(data) + 2}"].font = openpyxl.styles.Font(bold=True)  # Make sum bold
+
+    # Write income data to the first sheet
+    sheet1 = wb.active
+    sheet1.title = "売上"
+    append_data(sheet1, ys, "売上")
+    set_column_widths(sheet1)  # Adjust column widths
+
+    # Write expense data to the second sheet
+    sheet2 = wb.create_sheet(title="経費")
+    append_data(sheet2, xs, "経費")
+    set_column_widths(sheet2)  # Adjust column widths
+
+    # Save the workbook
+    wb.save(file_path + ".xlsx")
+    print(f"Excel file created: {file_path}.xlsx")
+
+def load_metada(file_path):
+    d = {
+        "none": []
+    }
     with open(file_path, 'r', encoding='utf-8') as f:
-        return [line.strip() for line in f.readlines()]
+        for line in f.readlines():
+            if(not line.strip().startswith("--")):
+                lsp = line.strip().split('|')
+                key   = lsp[0].strip()
+                value = lsp[1].strip()
+                if(not key in d):
+                    d[key] = []
+                d[key].append(value)
 
-income_blacklist = load_blacklist('csv/blacklist.txt')
+    return d
 
-csv_file = 'csv/meisai.csv'
+income_exception  = load_metada('csv/income.meta')
+expense_exception = load_metada('csv/expense.meta')
+
+def is_expense_exception(expense_exception, key):
+    category = "N/A"
+    key = key.strip()
+    for k in expense_exception.keys():
+        for q in expense_exception[k]:
+            if q in key:
+                category = k
+
+    if(re.compile(r"^V\d+$").match(key)):
+        return "none"
+
+    return category
+
+print(expense_exception)
+
+if(len(sys.argv) < 3):
+    print("\nmoney [csv file] [expense file]\n")
+    sys.exit()
+
+csv_file=sys.argv[1]
+expense_file=sys.argv[2]
+
 data = pd.read_csv(csv_file, encoding='sjis')
 
 def replace(x):
     return x.replace('\u3000', ' ').replace('振込', '').strip()
 
-def to_list(x, key):
-    return [x[KEY_DATE], x[KEY_CONTENT], int(x[key])]
+def to_list(x, category, key):
+    return [x[KEY_DATE], category, x[KEY_CONTENT], int(x[key])]
 
 incomes = []
 expenses = []
-expenses_sus = []  # Usage unknown, may or may not be expense
+expenses_sus = []
+
+def is_income_exception(income_exception, key):
+    category = "N/A"
+    key = key.strip()
+    for k in income_exception.keys():
+        for q in income_exception[k]:
+            if q in key:
+                category = k
+
+    return category
 
 def data_exists(xd, key):
     return str(xd[key]) != "nan"
@@ -36,15 +124,17 @@ for i, x in data.iterrows():
     xd = x.to_dict()
     x[KEY_CONTENT] = replace(x[KEY_CONTENT])
     if data_exists(xd, KEY_INCOME):
-        if x[KEY_CONTENT] not in income_blacklist:
-            incomes.append(to_list(x, KEY_INCOME))
-    elif data_exists(xd, KEY_EXPENSE):
-        if x[KEY_CONTENT] in unknown_usage_labels:
-            expenses_sus.append(to_list(x, KEY_EXPENSE))
-        else:
-            expenses.append(to_list(x, KEY_EXPENSE))
+        category = is_income_exception(income_exception, x[KEY_CONTENT])
+        if category != "none":
+            incomes.append(to_list(x, "売上", KEY_INCOME))
+    elif (data_exists(xd, KEY_EXPENSE)):
+        category = is_expense_exception(expense_exception, x[KEY_CONTENT])
+        if(category != "none"):
+            expenses.append(to_list(x, category, KEY_EXPENSE))
 
 def format(xs):
+    maxlen=10
+
     rs = []
     ss = list(str(xs))
     ss.reverse()
@@ -56,7 +146,13 @@ def format(xs):
             c = -1
         c += 1
     rs.reverse()
-    return "".join(rs)
+    t = "".join(rs)
+    if(t[0] == ","):
+        t = t[1:]
+
+    if(len(t) < maxlen):
+        t = " " * (maxlen - len(t)) + t
+    return t
 
 def trim_vat(amount_including_vat, vat_rate=10):
     vat_multiplier = 1 + (vat_rate / 100)
@@ -64,12 +160,22 @@ def trim_vat(amount_including_vat, vat_rate=10):
     return int(amount_excluding_vat)
 
 income_total_vat_included = 0
+expense_total = 0
 
 for i in incomes:
-    print(i)
-    income_total_vat_included += i[2]
+    income_total_vat_included += i[3]
+
+for e in expenses:
+    expense_total += i[3]
 
 income_total = trim_vat(income_total_vat_included)
+vat_total = income_total_vat_included - income_total
+target_tax = income_total - expense_total
 
-print(f"income total (with VAT): {format(income_total_vat_included)}")
-print(f"income total (without VAT): {format(income_total)}")
+write_to_xlsx(incomes, expenses, "expenses")
+
+print(f"income  total (with VAT):    {format(income_total_vat_included)}")
+print(f"income  total (without VAT): {format(income_total)}")
+print(f"VAT:                         {format(vat_total)}")
+print(f"expense total :              {format(expense_total)}")
+print(f"target tax:                  {format(target_tax)}")
