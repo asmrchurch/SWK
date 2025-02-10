@@ -70,11 +70,11 @@ def load_metada(file_path):
 
     return d
 
-income_exception  = load_metada('csv/income.meta')
-expense_exception = load_metada('csv/expense.meta')
+income_exception  = load_metada('meta/income.meta')
+expense_exception = load_metada('meta/expense.meta')
 
 def is_expense_exception(expense_exception, key):
-    category = "N/A"
+    category = "none"
     key = key.strip()
     for k in expense_exception.keys():
         for q in expense_exception[k]:
@@ -85,8 +85,6 @@ def is_expense_exception(expense_exception, key):
         return "none"
 
     return category
-
-print(expense_exception)
 
 if(len(sys.argv) < 3):
     print("\nmoney [csv file] [expense file]\n")
@@ -120,6 +118,31 @@ def is_income_exception(income_exception, key):
 def data_exists(xd, key):
     return str(xd[key]) != "nan"
 
+def rrr(x):
+    x.replace('\u3000', ' ')
+
+#
+# CREDIT CARD DATA
+#
+
+import csv
+with open("csv/credit.csv", mode="r", encoding="shift_jis", errors="ignore") as file:
+    reader = csv.reader(file)
+    pattern = re.compile(r"^\d+$")
+
+    for row in reader:
+        if(re.match(pattern, row[2])):
+            d = row[0]
+            l = row[1].strip()
+            a = int(row[2])
+            category = is_expense_exception(expense_exception, l)
+            print(f"{category},{l}")
+            if(category != "none"):
+                expenses.append([d, category, l, a])
+
+#
+# SMBC DATA
+#
 for i, x in data.iterrows():
     xd = x.to_dict()
     x[KEY_CONTENT] = replace(x[KEY_CONTENT])
